@@ -8,7 +8,8 @@ external_components:
 
 rigol:
 
-
+web_server:
+  
 api:
 ota:
   platform: esphome
@@ -20,7 +21,7 @@ esp32:
 
 wifi:
   fast_connect: true
-  #output_power: 8.5dB
+  output_power: 8.5dB
   power_save_mode: none
   networks:
     - ssid: "Futurama"

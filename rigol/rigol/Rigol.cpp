@@ -5,7 +5,7 @@
 #include "driver/gpio.h" // Include GPIO driver
 
 #define S(X) X, sizeof(X) - 1
-#define LED_PIN GPIO_NUM_8 // Define the GPIO pin for the LED (adjust as needed)
+#define LED_PIN GPIO_NUM_2 // Define the GPIO pin for the LED (adjust as needed)
 
 namespace esphome
 {
@@ -17,7 +17,7 @@ namespace esphome
     static TaskHandle_t s_task_handle;
     int bytes_fed=0;
     char adc_buffer[1407] = "#41400";
-    float samplerate=1e-3;
+    float samplefreq=1000.;
 
     static bool IRAM_ATTR callback(adc_continuous_handle_t handle, const adc_continuous_evt_data_t *edata, void *user_data)
     {
@@ -52,9 +52,13 @@ namespace esphome
       // ADC Configuration with Channels
       adc_continuous_config_t adc_cnfig = {
           .pattern_num = numChannels,
-          .sample_freq_hz = 1.0 / samplerate,
+          .sample_freq_hz = 20 * 1000,
           .conv_mode = ADC_CONV_SINGLE_UNIT_1,
+      #if (SOC_ADC_DIGI_RESULT_BYTES == 2)
+          .format = ADC_DIGI_OUTPUT_FORMAT_TYPE1,
+      #else
           .format = ADC_DIGI_OUTPUT_FORMAT_TYPE2,
+      #endif
       };
       adc_digi_pattern_config_t channel_config[numChannels];
       for (int i = 0; i < numChannels; i++)
@@ -65,14 +69,20 @@ namespace esphome
         channel_config[i].unit = ADC_UNIT_1;
       }
       adc_cnfig.adc_pattern = channel_config;
-      ESP_ERROR_CHECK(adc_continuous_config(adc_handle, &adc_cnfig));
+      if(adc_continuous_config(adc_handle, &adc_cnfig) != ESP_OK)
+      {
+        ESP_LOGW(TAG, "ADC Configuration failed");
+      }
 
       // Callback Configuration
       adc_continuous_evt_cbs_t cb_config = {
           .on_conv_done = callback,
       };
       TaskHandle_t task_handle =  xTaskGetCurrentTaskHandle();
-      ESP_ERROR_CHECK(adc_continuous_register_event_callbacks(adc_handle, &cb_config, task_handle));
+      if(adc_continuous_register_event_callbacks(adc_handle, &cb_config, task_handle) != ESP_OK)
+      {
+        ESP_LOGW(TAG, "ADC Callback failed");
+      }
     }
 
     void setup_led()
@@ -344,7 +354,7 @@ namespace esphome
       case str2int(":LA:DIG13:DISP?"):
       case str2int(":LA:DIG14:DISP?"):
       case str2int(":LA:DIG15:DISP?"): return "0";
-      case str2int(":TIM:SCAL?"): return std::to_string(samplerate);
+      case str2int(":TIM:SCAL?"): return std::to_string(1/samplefreq);
       case str2int(":CHAN1:PROB?"): return "1";
       case str2int(":CHAN2:PROB?"): return "1";
       case str2int(":TRIG:STAT?"): return block++ ? "AUTO" : "STOP";
