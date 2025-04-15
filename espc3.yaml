@@ -1,0 +1,43 @@
+esphome:
+  name: esp32c3
+
+
+external_components:
+  - source:  rigol
+    components: [ rigol,tcp_server ]
+
+rigol:
+
+
+api:
+ota:
+  platform: esphome
+esp32:
+  board: esp32doit-devkit-v1
+  framework:
+    type: esp-idf
+    version: latest
+
+wifi:
+  fast_connect: true
+  #output_power: 8.5dB
+  power_save_mode: none
+  networks:
+    - ssid: "Futurama"
+      password: !secret wifi_ap_password
+  ap:
+    ssid: "C3 Fallback Hotspot"
+    password: !secret wifi_ap_password
+
+captive_portal:
+
+
+logger:
+#  level: INFO
+  level: DEBUG
+#  level: VERBOSE
+
+#sensor:
+#  - platform: wifi_signal
+#    name: "WiFi Signal Sensor"
+#    update_interval: 2s
