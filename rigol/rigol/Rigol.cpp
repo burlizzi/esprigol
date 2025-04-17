@@ -4,9 +4,15 @@
 #include "esp_adc/adc_continuous.h"
 #include "driver/gpio.h" // Include GPIO driver
 
+#include "esp_adc/adc_cali.h"
+#include "esp_adc/adc_cali_scheme.h"
+
+
 #define S(X) X, sizeof(X) - 1
 #define LED_PIN GPIO_NUM_2 // Define the GPIO pin for the LED (adjust as needed)
-
+#define BUFFER_SIZE 1400
+#define xstr(a) STR(a)
+#define STR(a) #a
 namespace esphome
 {
   namespace rigol
@@ -15,9 +21,10 @@ namespace esphome
     bool available = false;
     adc_continuous_handle_t adc_handle = NULL;
     static TaskHandle_t s_task_handle;
+    adc_cali_handle_t adc1_cali_chan0_handle = NULL;
     int bytes_fed=0;
-    char adc_buffer[1407] = "#41400";
-    float samplefreq=1000.;
+    char adc_buffer[BUFFER_SIZE+7] = "#4" xstr(BUFFER_SIZE);
+    uint32_t samplefreq=10000;
 
     static bool IRAM_ATTR callback(adc_continuous_handle_t handle, const adc_continuous_evt_data_t *edata, void *user_data)
     {
@@ -25,10 +32,13 @@ namespace esphome
       char* raw = &adc_buffer[6];
       for (int i = 0; i < edata->size; i += SOC_ADC_DIGI_RESULT_BYTES) {
           adc_digi_output_data_t *p = (adc_digi_output_data_t*)(void*)&(edata->conv_frame_buffer[i]);
+          static int voltage;
   #if (SOC_ADC_DIGI_RESULT_BYTES == 2)
-      raw[i/SOC_ADC_DIGI_RESULT_BYTES] = p->type1.data;
+      adc_cali_raw_to_voltage(adc1_cali_chan0_handle, p->type1.data, &voltage);
+      raw[i/SOC_ADC_DIGI_RESULT_BYTES] = voltage*256/3300;
   #else
-      raw[i/SOC_ADC_DIGI_RESULT_BYTES] =  p->type2.data;
+      adc_cali_raw_to_voltage(adc1_cali_chan0_handle, p->type2.data, &voltage);
+      raw[i/SOC_ADC_DIGI_RESULT_BYTES] =  voltage*256/3300;
   #endif
       }
       bytes_fed+=edata->size/SOC_ADC_DIGI_RESULT_BYTES;
@@ -36,23 +46,73 @@ namespace esphome
       BaseType_t mustYield = pdFALSE;
       gpio_set_level(LED_PIN, !available); // Turn off the LED
       vTaskNotifyGiveFromISR(task_handle, &mustYield);
-      available = true;
+      
       return (mustYield == pdTRUE);
     }
+
+    static bool example_adc_calibration_init(adc_unit_t unit, adc_channel_t channel, adc_atten_t atten, adc_cali_handle_t *out_handle)
+    {
+        adc_cali_handle_t handle = NULL;
+        esp_err_t ret = ESP_FAIL;
+        bool calibrated = false;
+    
+    #if ADC_CALI_SCHEME_CURVE_FITTING_SUPPORTED
+        if (!calibrated) {
+            ESP_LOGI(TAG, "calibration scheme version is %s", "Curve Fitting");
+            adc_cali_curve_fitting_config_t cali_config = {
+                .unit_id = unit,
+                .chan = channel,
+                .atten = atten,
+                .bitwidth = ADC_BITWIDTH_DEFAULT,
+            };
+            ret = adc_cali_create_scheme_curve_fitting(&cali_config, &handle);
+            if (ret == ESP_OK) {
+                calibrated = true;
+            }
+        }
+    #endif
+    
+    #if ADC_CALI_SCHEME_LINE_FITTING_SUPPORTED
+        if (!calibrated) {
+            ESP_LOGI(TAG, "calibration scheme version is %s", "Line Fitting");
+            adc_cali_line_fitting_config_t cali_config = {
+                .unit_id = unit,
+                .atten = atten,
+                .bitwidth = ADC_BITWIDTH_DEFAULT,
+            };
+            ret = adc_cali_create_scheme_line_fitting(&cali_config, &handle);
+            if (ret == ESP_OK) {
+                calibrated = true;
+            }
+        }
+    #endif
+    
+        *out_handle = handle;
+        if (ret == ESP_OK) {
+            ESP_LOGI(TAG, "Calibration Success");
+        } else if (ret == ESP_ERR_NOT_SUPPORTED || !calibrated) {
+            ESP_LOGW(TAG, "eFuse not burnt, skip software calibration");
+        } else {
+            ESP_LOGE(TAG, "Invalid arg or no memory");
+        }
+    
+        return calibrated;
+    }
+    
 
     void ADC_Init(adc_channel_t *channels, uint8_t numChannels)
     {
       // handle configuration
       adc_continuous_handle_cfg_t handle_config = {
-          .max_store_buf_size = 2800*SOC_ADC_DIGI_RESULT_BYTES,
-          .conv_frame_size = 1400*SOC_ADC_DIGI_RESULT_BYTES,
+          .max_store_buf_size = BUFFER_SIZE*2*SOC_ADC_DIGI_RESULT_BYTES,
+          .conv_frame_size = BUFFER_SIZE*SOC_ADC_DIGI_RESULT_BYTES,
       };
       ESP_ERROR_CHECK(adc_continuous_new_handle(&handle_config, &adc_handle));
 
       // ADC Configuration with Channels
       adc_continuous_config_t adc_cnfig = {
           .pattern_num = numChannels,
-          .sample_freq_hz = 20 * 1000,
+          .sample_freq_hz = samplefreq,
           .conv_mode = ADC_CONV_SINGLE_UNIT_1,
       #if (SOC_ADC_DIGI_RESULT_BYTES == 2)
           .format = ADC_DIGI_OUTPUT_FORMAT_TYPE1,
@@ -67,6 +127,7 @@ namespace esphome
         channel_config[i].atten = ADC_ATTEN_DB_12;
         channel_config[i].bit_width = ADC_BITWIDTH_12;
         channel_config[i].unit = ADC_UNIT_1;
+        
       }
       adc_cnfig.adc_pattern = channel_config;
       if(adc_continuous_config(adc_handle, &adc_cnfig) != ESP_OK)
@@ -74,6 +135,7 @@ namespace esphome
         ESP_LOGW(TAG, "ADC Configuration failed");
       }
 
+            
       // Callback Configuration
       adc_continuous_evt_cbs_t cb_config = {
           .on_conv_done = callback,
@@ -104,16 +166,20 @@ namespace esphome
     {
       
       adc_channel_t channels[] = {
-        //ADC_CHANNEL_0,
+        ADC_CHANNEL_0,
         //ADC_CHANNEL_1,
         //ADC_CHANNEL_2,
         //ADC_CHANNEL_3,
-        ADC_CHANNEL_4,
+        //ADC_CHANNEL_4,
         //ADC_CHANNEL_5,
         //ADC_CHANNEL_6,
         //ADC_CHANNEL_7,
       };
       ADC_Init(channels, sizeof(channels) / sizeof(adc_channel_t)); 
+
+      
+      example_adc_calibration_init(ADC_UNIT_1, channels[0], ADC_ATTEN_DB_12, &adc1_cali_chan0_handle);        
+
       ESP_LOGCONFIG(TAG, "ADC Initialized...");
       while (1)
       {
@@ -127,10 +193,7 @@ namespace esphome
         if (available)
         {
           available = false;
-          //ESP_LOGD(TAG, "ADC data available");
-          gpio_set_level(LED_PIN, 0); // Turn on the LED
-          
-          gpio_set_level(LED_PIN, 1); // Turn off the LED
+          shared_socket->write(adc_buffer, sizeof(adc_buffer));
         }
         else
         {
@@ -354,7 +417,7 @@ namespace esphome
       case str2int(":LA:DIG13:DISP?"):
       case str2int(":LA:DIG14:DISP?"):
       case str2int(":LA:DIG15:DISP?"): return "0";
-      case str2int(":TIM:SCAL?"): return std::to_string(1/samplefreq);
+      case str2int(":TIM:SCAL?"): return std::to_string(100.0/samplefreq);
       case str2int(":CHAN1:PROB?"): return "1";
       case str2int(":CHAN2:PROB?"): return "1";
       case str2int(":TRIG:STAT?"): return block++ ? "AUTO" : "STOP";
@@ -366,11 +429,18 @@ namespace esphome
       case str2int(":CHAN2:OFFS?"): return "0";
       case str2int(":CHAN1:COUP?"):
       case str2int(":CHAN2:COUP?"): return "DC";
-      case str2int(":WAV:YINC?"): return "0.01";
-      case str2int(":WAV:YOR?"): return "127";
-      case str2int(":WAV:YREF?"): return "256";
+      case str2int(":WAV:YINC?"): return std::to_string(3.3/256);;
+      case str2int("WAV:XINC?"): return std::to_string(1.0/samplefreq);
+      case str2int(":WAV:YOR?"): return "0";
+      case str2int(":WAV:YREF?"): return "-1.27";
       case str2int(":WAV:BEG"): 
-      case str2int(":RUN"): bytes_fed=0; return "";
+      case str2int(":RUN"): 
+        bytes_fed=0; 
+        if(adc_continuous_start(adc_handle)!=ESP_OK)
+        {
+          ESP_LOGW(TAG, "ADC Start failed");
+        }
+        return "";
       case str2int(":STOP"): bytes_fed=0;if(adc_continuous_stop(adc_handle)!=ESP_OK)
         {
           ESP_LOGW(TAG, "ADC Stop failed");
@@ -382,12 +452,8 @@ namespace esphome
 
       case str2int(":WAV:DATA?"):
       {
-        if(adc_continuous_start(adc_handle)!=ESP_OK)
-        {
-          ESP_LOGW(TAG, "ADC Start failed");
-        }
         ESP_LOGD(TAG, "received: %s", data.c_str());
-        shared_socket->write(adc_buffer, sizeof(adc_buffer));
+        available = true;
         return "";
       }
       default:
