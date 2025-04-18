@@ -10,7 +10,7 @@ TcpServer = tcp_ns.class_("TcpServer", cg.Component)
 CONFIG_SCHEMA = cv.Schema(
     {
         cv.GenerateID(): cv.declare_id(TcpServer),
-        cv.Optional(CONF_PORT, default=0): cv.Any(0, cv.port),
+        cv.Required(CONF_PORT): cv.Any(0, cv.port),
     }
 )
 

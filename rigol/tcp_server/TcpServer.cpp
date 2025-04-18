@@ -2,6 +2,11 @@
 #include "esphome/core/log.h"
 #include "TcpServer.h"
 
+#include "esphome/components/network/util.h"
+#include "esphome/core/log.h"
+
+
+
 #define S(X) X, sizeof(X) -1
 namespace esphome
 {
@@ -59,68 +64,93 @@ namespace esphome
       }
     }
 
+
+
+    void TcpServer::tcp_task(void *param)
+    {
+      TcpServer *tcp_server = static_cast<TcpServer *>(param);
+      std::unique_ptr<socket::Socket> client_(tcp_server->shared_socket);
+      char data;
+      int len = 0;
+      while ((len = client_->read(&data, 1)) > 0)
+      {
+        if (data == '\n')
+        {
+          ESP_LOGD(TAG, "rec: %s", tcp_server->ss_.str().c_str());
+          auto resp = tcp_server->parse(tcp_server->ss_.str(),client_.get());
+            ESP_LOGD(TAG, "Sending: %s", resp.c_str());
+          resp+= "\0";
+          client_->write(resp.c_str(), resp.length());
+          tcp_server->ss_.str(std::string()); // clear the stringstream
+          tcp_server->ss_.clear();            // clear the error state
+        }
+        else
+        tcp_server->ss_ << data;
+      }
+      client_->close();
+      ESP_LOGD(TAG, "Client disconnected %s", client_->getpeername().c_str());
+/*      if(adc_continuous_stop(adc_handle)!=ESP_OK)
+        {
+          ESP_LOGW(TAG, "ADC Stop failed");
+        }*/
+        tcp_server->shared_socket=nullptr;
+      vTaskNotifyGiveFromISR(tcp_server->s_task_handle, NULL);
+        vTaskDelete(NULL);
+    }
+
     void TcpServer::loop()
     {
-      while (true)
-      {
-        struct sockaddr_storage source_addr;
-        socklen_t addr_len = sizeof(source_addr);
-        auto sock = socket_->accept((struct sockaddr *)&source_addr, &addr_len);
-        if (!sock)
-          break;
-        ESP_LOGD(TAG, "Accepted %s", sock->getpeername().c_str());
-        client_ = std::move(sock);
-        int err = client_->setblocking(false);
-        if (err != 0) {
-          ESP_LOGW(TAG, "Socket unable to set nonblocking mode: errno %d", err);
-          client_->close();
-          client_ = nullptr;
-          this->mark_failed();
-          return;
-        }
-      
-      }
       if (!network::is_connected())
       {
         // when network is disconnected force disconnect immediately
         // don't wait for timeout
         return;
       }
-      
-      if(client_)
+      while (true)
       {
-        char data;
-        int len = 0;
-        while((len=client_->read(&data, 1))>0)
+        struct sockaddr_storage source_addr;
+        socklen_t addr_len = sizeof(source_addr);
+        auto sock = socket_->accept((struct sockaddr *)&source_addr, &addr_len).release();
+        int enable = 1;
+        if (!sock)
+          break;
+        shared_socket = sock;
+        
+
+        int err = shared_socket->setsockopt(IPPROTO_TCP, TCP_NODELAY, &enable, sizeof(int));
+        if (err != 0)
         {
-          if (data == '\n')
-          {
-            auto resp=parse(ss_.str());
-            client_->write(resp.c_str(), resp.length());
-            ss_.str(std::string()); // clear the stringstream
-            ss_.clear(); // clear the error state
-          }
-          else
-            ss_<<data;
-        }
-        if (len==0)
-        {
-          ESP_LOGW(TAG, "Connection closed");
-          client_->close();
-          client_ = nullptr;
+          ESP_LOGW(TAG, "Socket could not enable tcp nodelay, errno: %d", errno);
           return;
         }
-        if (len == -1)
+        ESP_LOGW(TAG, "Socket could enable tcp nodelay, errno: %d", enable);
+
+#ifndef CONFIG_FREERTOS_UNICORE
+
+        if (1)
         {
-          if (errno == EWOULDBLOCK || errno == EAGAIN)
-          {
-            return;
+          xTaskCreatePinnedToCore(tcp_task, "tcp_thread",
+            10000,   // stack size (in words)
+            this,    // input params
+            1,       // priority
+            nullptr, // Handle, not needed
+            1        // core
+          );
           }
-          ESP_LOGW(TAG, "Socket read failed with errno %d", errno);
-          client_->close();
-          client_ = nullptr;
-          return;
+        else
+        {
+#endif
+          xTaskCreate(tcp_task, "tcp_thread",
+                      10000,  // stack size (in words)
+                      this,   // input params
+                      1,      // priority
+                      nullptr // Handle, not needed
+          );
+#ifndef CONFIG_FREERTOS_UNICORE
         }
+#endif
+
+        ESP_LOGD(TAG, "Accepted %s", shared_socket->getpeername().c_str());
       }
     }
 
@@ -134,9 +164,10 @@ namespace esphome
         return !str[h] ? 5381 : (str2int(str, h+1) * 33) ^ str[h];
     }
 
-    std::string TcpServer::parse(const std::string &data)
+    std::string TcpServer::parse(const std::string &data,socket::Socket *sock)
     {
       ESP_LOGD(TAG, "received: %s", data.c_str());
+      return "";
     }
 
   }
