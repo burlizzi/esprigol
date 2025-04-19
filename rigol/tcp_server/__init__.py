@@ -4,13 +4,14 @@ from esphome.const import CONF_ID,CONF_PORT
 
 DEPENDENCIES = []
 
+CONF_TCP_SERVER_ID = "tcp_server_id"
 tcp_ns = cg.esphome_ns.namespace("tcp_server")
 TcpServer = tcp_ns.class_("TcpServer", cg.Component)
 
 CONFIG_SCHEMA = cv.Schema(
     {
         cv.GenerateID(): cv.declare_id(TcpServer),
-        cv.Required(CONF_PORT): cv.Any(0, cv.port),
+        cv.Optional(CONF_PORT,default=5555): cv.Any(0, cv.port),
     }
 )
 

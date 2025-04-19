@@ -11,6 +11,7 @@ from esphome.const import (
     CONF_PIN,
     CONF_RAW,
     CONF_WIFI,
+    CONF_FREQUENCY,
     DEVICE_CLASS_VOLTAGE,
     STATE_CLASS_MEASUREMENT,
     UNIT_VOLT,
@@ -29,7 +30,7 @@ from . import (
 
 _LOGGER = logging.getLogger(__name__)
 
-AUTO_LOAD = ["voltage_sampler"]
+AUTO_LOAD = ["voltage_sampler","sensor"]
 
 CONF_SAMPLES = "samples"
 CONF_SAMPLING_MODE = "sampling_mode"
@@ -71,6 +72,7 @@ def final_validate_config(config):
 
     return config
 
+CONF_ADC_CONTINOUS_ID = "adc_continous_id"
 
 ADCSensor = adc_ns.class_(
     "ADCContinuousSensor", sensor.Sensor, cg.PollingComponent, voltage_sampler.VoltageSampler
@@ -91,8 +93,9 @@ CONFIG_SCHEMA = cv.All(
             cv.SplitDefault(CONF_ATTENUATION, esp32="0db"): cv.All(
                 cv.only_on_esp32, _attenuation
             ),
-            cv.Optional(CONF_SAMPLES, default=1): cv.int_range(min=1, max=255),
+            cv.Optional(CONF_SAMPLES, default=1): cv.int_range(min=1, max=4096),
             cv.Optional(CONF_SAMPLING_MODE, default="avg"): _sampling_mode,
+            cv.Optional(CONF_FREQUENCY, default=20000): cv.int_range(min=20000, max=8000000),
         }
     )
     .extend(cv.polling_component_schema("60s")),
@@ -117,7 +120,7 @@ async def to_code(config):
 
     cg.add(var.set_output_raw(config[CONF_RAW]))
     cg.add(var.set_sample_count(config[CONF_SAMPLES]))
-    cg.add(var.set_sampling_mode(config[CONF_SAMPLING_MODE]))
+    cg.add(var.set_frequency(config[CONF_FREQUENCY]))
 
     if attenuation := config.get(CONF_ATTENUATION):
         if attenuation == "auto":
@@ -133,7 +136,7 @@ async def to_code(config):
             and pin_num in ESP32_VARIANT_ADC1_PIN_TO_CHANNEL[variant]
         ):
             chan = ESP32_VARIANT_ADC1_PIN_TO_CHANNEL[variant][pin_num]
-            cg.add(var.set_channel1(chan))
+            cg.add(var.set_channel(chan))
         elif (
             variant in ESP32_VARIANT_ADC2_PIN_TO_CHANNEL
             and pin_num in ESP32_VARIANT_ADC2_PIN_TO_CHANNEL[variant]

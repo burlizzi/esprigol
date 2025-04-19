@@ -2,8 +2,8 @@ esphome:
   name: esp32c3
 
 esp32:
-  board: esp32-c3-devkitm-1
-  #board: esp32doit-devkit-v1
+  #board: esp32-c3-devkitm-1
+  board: esp32doit-devkit-v1
   framework:
     type: esp-idf
     version: latest
@@ -11,11 +11,23 @@ esp32:
 
 external_components:
   - source:  rigol
-    components: [ rigol,adc ]
+    components: [ rigol,adc_continous,tcp_server ]
+
+#tcp_server:
+#  id: rigol_tcp_server
+#  port: 5000
+
+sensor:
+  - platform: adc_continous
+    pin: GPIO34
+    name: "ADC Continuous Sensor"
+    id: adc_sensor
+    frequency: 20000
+    samples: 1400
 
 rigol:
-  pin: GPIO00
-  frequency: 1000
+  #pin: GPIO00
+  #frequency: 1000
 
 #sensor:
 #  - platform: adc

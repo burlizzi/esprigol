@@ -94,7 +94,7 @@ namespace esphome
           ESP_LOGW(TAG, "ADC Stop failed");
         }*/
         tcp_server->shared_socket=nullptr;
-      vTaskNotifyGiveFromISR(tcp_server->s_task_handle, NULL);
+    //  vTaskNotifyGiveFromISR(tcp_server->s_task_handle, NULL);
         vTaskDelete(NULL);
     }
 
@@ -167,6 +167,8 @@ namespace esphome
     std::string TcpServer::parse(const std::string &data,socket::Socket *sock)
     {
       ESP_LOGD(TAG, "received: %s", data.c_str());
+      this->tcp_callback_.call( data,sock);
+
       return "";
     }
 
