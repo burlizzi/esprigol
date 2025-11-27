@@ -3,6 +3,8 @@ import logging
 import esphome.codegen as cg
 from esphome.components import sensor, voltage_sampler
 from esphome.components.esp32 import get_esp32_variant
+from esphome.components.esp32 import add_idf_sdkconfig_option
+
 import esphome.config_validation as cv
 from esphome.const import (
     CONF_ATTENUATION,
@@ -129,6 +131,7 @@ async def to_code(config):
             cg.add(var.set_attenuation(attenuation))
 
     if CORE.is_esp32:
+        add_idf_sdkconfig_option("CONFIG_ADC_CONTINUOUS_ISR_IRAM_SAFE", True)
         variant = get_esp32_variant()
         pin_num = config[CONF_PIN][CONF_NUMBER]
         if (
