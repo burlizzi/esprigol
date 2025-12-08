@@ -1,5 +1,8 @@
 #include "adc_sensor.h"
 #include "esphome/core/component.h"
+#ifdef USE_OTA
+#include "esphome/components/ota/ota_backend.h"
+#endif
 
 namespace esphome
 {
@@ -101,6 +104,14 @@ component->buffer_[i/SOC_ADC_DIGI_RESULT_BYTES] =  p->type2.data;
 
     void ADCContinuousSensor::setup()
     {
+      #ifdef USE_OTA
+        ota::get_global_ota_callback()->add_on_state_callback(
+          [this](ota::OTAState state, float progress, uint8_t error, ota::OTAComponent *comp) {
+            if (state == ota::OTA_STARTED) {
+              this->stop();
+            }
+          });
+      #endif
 
       const int numChannels = 1; // Number of ADC channels to be used
 
