@@ -10,7 +10,7 @@ namespace esphome {
 namespace adc_continous {
 
 int overflow_count = 0;
-int calc_count = 0;
+
 double  filteredV1=0,filteredV2=0,filteredV3=0; // Filtered_ is the raw analog value minus the DC offset
 uint32_t samples = 0;
 unsigned int crossCount = 0; // Used to measure number of times threshold is crossed.
@@ -20,7 +20,7 @@ uint32_t lasti=0;
 uint32_t unknown = 0;
 uint16_t maxv = 0;
 uint16_t minv = 4096;
-float avgPower = 0;
+
 
 uint16_t ADCContinuousSensor::analogRead(uint8_t pin) { return values[pin] / values[pin + 4]; }
 
@@ -35,11 +35,10 @@ bool IRAM_ATTR ADCContinuousSensor::callback(adc_continuous_handle_t handle,
   auto *sensor = static_cast<ADCContinuousSensor *>(user_data);
 
   sensor->calcIV(edata->size, edata->conv_frame_buffer);
-  calc_count++;
-  avgPower += sensor->realPower1 + sensor->realPower2 + sensor->realPower3;
-  sensor->avgp1 += sensor->realPower1;
-  sensor->avgp2 += sensor->realPower2;
-  sensor->avgp3 += sensor->realPower3;
+  sensor->set_->calc_count++;
+  sensor->set_->avgp1 += sensor->realPower1;
+  sensor->set_->avgp2 += sensor->realPower2;
+  sensor->set_->avgp3 += sensor->realPower3;
   return false;
 }
 
@@ -56,8 +55,8 @@ inline adc_digi_output_data_t *getNext(adc_digi_output_data_t *data, adc_digi_ou
 void ADCContinuousSensor::loop() {
 }
 
-uint8_t udpkt[1500];
-int pktsize=0;
+//uint8_t udpkt[1500];
+//int pktsize=0;
 
 void IRAM_ATTR ADCContinuousSensor::calcIV(uint32_t len, uint8_t *buffer) {
   constexpr double PHASECAL1 = 1.7; // Phase calibration value
@@ -114,15 +113,8 @@ void IRAM_ATTR ADCContinuousSensor::calcIV(uint32_t len, uint8_t *buffer) {
     auto sampleI1 = datai1->type1.data;
     auto sampleI2 = datai2->type1.data;
     auto sampleI3 = datai3->type1.data;
-    udpkt[(numberOfSamples)*6+0]=sampleV1/16;
-    udpkt[(numberOfSamples)*6+1]=sampleI1/16;
-    udpkt[(numberOfSamples)*6+2]=sampleV2/16;
-    udpkt[(numberOfSamples)*6+3]=sampleI2/16;
-    udpkt[(numberOfSamples)*6+4]=sampleV3/16;
-    udpkt[(numberOfSamples)*6+5]=sampleI3/16;
     pktsize=(numberOfSamples+1)*6;
     
-    numberOfSamples++;
    
     datav1++;
     datav2++;
@@ -132,16 +124,27 @@ void IRAM_ATTR ADCContinuousSensor::calcIV(uint32_t len, uint8_t *buffer) {
     datai3++;
 
     // B) Apply digital low pass filters to extract DC offset, then subtract
-    offsetV = offsetV + ((sampleV1 - offsetV) / 10240);
+    offsetV = offsetV + ((sampleV1 - offsetV) / 1024);
     filteredV1 = sampleV1 - offsetV;
     filteredV2 = sampleV2 - offsetV;
     filteredV3 = sampleV3 - offsetV;
-    offsetI1 = offsetI1 + ((sampleI1 - offsetI1) / 10240);
+    offsetI1 = offsetI1 + ((sampleI1 - offsetI1) / 1024);
     auto filteredI1 = sampleI1 - offsetI1;
-    offsetI2 = offsetI2 + ((sampleI2 - offsetI2) / 10240);
+    offsetI2 = offsetI2 + ((sampleI2 - offsetI2) / 1024);
     auto filteredI2 = sampleI2 - offsetI2;
-    offsetI3 = offsetI3 + ((sampleI3 - offsetI3) / 10240);
+    offsetI3 = offsetI3 + ((sampleI3 - offsetI3) / 1024);
     auto filteredI3 = sampleI3 - offsetI3;
+
+
+
+    udpkt[(numberOfSamples)*6+0]=filteredV1/16;
+    udpkt[(numberOfSamples)*6+1]=filteredI1/16;
+    udpkt[(numberOfSamples)*6+2]=filteredV2/16;
+    udpkt[(numberOfSamples)*6+3]=filteredI2/16;
+    udpkt[(numberOfSamples)*6+4]=filteredV3/16;
+    udpkt[(numberOfSamples)*6+5]=filteredI3/16;
+
+    numberOfSamples++;
 
     // C) RMS voltage
     sumV += filteredV1 * filteredV1;
@@ -214,12 +217,13 @@ void IRAM_ATTR ADCContinuousSensor::calcIV(uint32_t len, uint8_t *buffer) {
 }
 
 void ADCContinuousSensor::update() {
-  ESP_LOGI(TAG, "samples= %d overflow=%d cross=%d", numberOfSamples, overflow_count,crossCount);
+  //ESP_LOGI(TAG, "samples= %d overflow=%d cross=%d", numberOfSamples, overflow_count,crossCount);
   if (udp_) {
-    udp_->send_packet(udpkt, pktsize);
+    //udp_->send_packet(udpkt, pktsize);
   }
 
   this->publish_state(sample());
+  std::swap(this->set_, this->get_);
 }
 
 #if SOC_ADC_MONITOR_SUPPORTED
@@ -337,17 +341,16 @@ void ADCContinuousSensor::data(char *data) {
 }
 
 float ADCContinuousSensor::sample() {
-  auto ret=avgPower / calc_count;
-  lastRealPower1=avgp1 / calc_count;
-  lastRealPower2=avgp2 / calc_count;
-  lastRealPower3=avgp3 / calc_count;
+  //auto ret=avgPower / calc_count;
+  lastRealPower1=get_->avgp1 / get_->calc_count;
+  lastRealPower2=get_->avgp2 / get_->calc_count;
+  lastRealPower3=get_->avgp3 / get_->calc_count;
   overflow_count = 0;
-  calc_count = 0;
-  avgPower = 0;
-  avgp1 = 0;
-  avgp2 = 0;
-  avgp3 = 0;
-  return ret;
+  get_->calc_count = 0;
+  get_->avgp1 = 0;
+  get_->avgp2 = 0;
+  get_->avgp3 = 0;
+  return lastRealPower1+lastRealPower2+lastRealPower3;
 
 }
 

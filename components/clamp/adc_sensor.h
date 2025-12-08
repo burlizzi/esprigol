@@ -64,6 +64,17 @@ namespace adc_continous
 
         }
         udp::UDPComponent* udp_=nullptr;
+        struct State {
+          // Add any state variables needed for ISR <-> loop communication
+          float avgp1 = 0;
+          float avgp2 = 0;
+          float avgp3 = 0;
+          int calc_count = 0;
+        };
+        State state_[2];
+        volatile State *set_ = state_;
+        volatile State *get_ = state_ + 1;
+
         //const uint8_t* get_buffer() { return buffer_; }
     double 
       lastRealPower1=0,lastRealPower2=0,lastRealPower3=0,
@@ -74,9 +85,6 @@ namespace adc_continous
       double ICAL1 = -62.84;    // Current calibration constant
       double ICAL2 = -8.21;
       double ICAL3 = -8.21;
-float avgp1 = 0;
-float avgp2 = 0;
-float avgp3 = 0;
     uint8_t phaseCal1=0,phaseCal2=1,phaseCal3=2;         //Holds the phase calibration value.
 
        protected:
