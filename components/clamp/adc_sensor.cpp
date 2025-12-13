@@ -9,7 +9,7 @@
 namespace esphome {
 namespace adc_continous {
 
-int overflow_count = 0;
+
 
 double  filteredV1=0,filteredV2=0,filteredV3=0; // Filtered_ is the raw analog value minus the DC offset
 uint32_t samples = 0;
@@ -24,23 +24,8 @@ uint16_t minv = 4096;
 
 uint16_t ADCContinuousSensor::analogRead(uint8_t pin) { return values[pin] / values[pin + 4]; }
 
-bool IRAM_ATTR overflow(adc_continuous_handle_t handle, const adc_continuous_evt_data_t *edata,
-                        void *user_data) {
-  overflow_count++;
-  return false;
-}
 
-bool IRAM_ATTR ADCContinuousSensor::callback(adc_continuous_handle_t handle,
-                                             const adc_continuous_evt_data_t *edata, void *user_data) {
-  auto *sensor = static_cast<ADCContinuousSensor *>(user_data);
 
-  sensor->calcIV(edata->size, edata->conv_frame_buffer);
-  sensor->set_->calc_count++;
-  sensor->set_->avgp1 += sensor->realPower1;
-  sensor->set_->avgp2 += sensor->realPower2;
-  sensor->set_->avgp3 += sensor->realPower3;
-  return false;
-}
 
 inline adc_digi_output_data_t *getNext(adc_digi_output_data_t *data, adc_digi_output_data_t *end,
                                        uint8_t channel) {
@@ -53,6 +38,18 @@ inline adc_digi_output_data_t *getNext(adc_digi_output_data_t *data, adc_digi_ou
 }
 
 void ADCContinuousSensor::loop() {
+  uint32_t len = 0;
+  if( adc_continuous_read(adc_handle, buffer_, sample_count_ * SOC_ADC_DIGI_RESULT_BYTES * 4, &len, 0) != ESP_OK ) {
+   return;
+  }
+
+  calcIV(len, buffer_);
+  set_->calc_count++;
+  set_->avgp1 += realPower1;
+  set_->avgp2 += realPower2;
+  set_->avgp3 += realPower3;
+  adc_callback_.call(realPower1+ realPower2+ realPower3);
+
 }
 
 //uint8_t udpkt[1500];
@@ -113,7 +110,7 @@ void IRAM_ATTR ADCContinuousSensor::calcIV(uint32_t len, uint8_t *buffer) {
     auto sampleI1 = datai1->type1.data;
     auto sampleI2 = datai2->type1.data;
     auto sampleI3 = datai3->type1.data;
-    pktsize=(numberOfSamples+1)*6;
+    //pktsize=(numberOfSamples+1)*6;
     
    
     datav1++;
@@ -137,12 +134,12 @@ void IRAM_ATTR ADCContinuousSensor::calcIV(uint32_t len, uint8_t *buffer) {
 
 
 
-    udpkt[(numberOfSamples)*6+0]=filteredV1/16;
+    /*udpkt[(numberOfSamples)*6+0]=filteredV1/16;
     udpkt[(numberOfSamples)*6+1]=filteredI1/16;
     udpkt[(numberOfSamples)*6+2]=filteredV2/16;
     udpkt[(numberOfSamples)*6+3]=filteredI2/16;
     udpkt[(numberOfSamples)*6+4]=filteredV3/16;
-    udpkt[(numberOfSamples)*6+5]=filteredI3/16;
+    udpkt[(numberOfSamples)*6+5]=filteredI3/16;*/
 
     numberOfSamples++;
 
@@ -288,8 +285,8 @@ void ADCContinuousSensor::setup() {
   }
 
   adc_continuous_evt_cbs_t cb_config = {
-      .on_conv_done = ADCContinuousSensor::callback,
-      .on_pool_ovf = overflow,
+//      .on_conv_done = ADCContinuousSensor::callback,
+//      .on_pool_ovf = overflow,
   };
   if (adc_continuous_register_event_callbacks(adc_handle, &cb_config, this) != ESP_OK) {
     ESP_LOGW(TAG, "ADC Callback failed");
@@ -345,7 +342,6 @@ float ADCContinuousSensor::sample() {
   lastRealPower1=get_->avgp1 / get_->calc_count;
   lastRealPower2=get_->avgp2 / get_->calc_count;
   lastRealPower3=get_->avgp3 / get_->calc_count;
-  overflow_count = 0;
   get_->calc_count = 0;
   get_->avgp1 = 0;
   get_->avgp2 = 0;

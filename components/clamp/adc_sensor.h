@@ -16,6 +16,7 @@
 #include "esp_adc/adc_cali_scheme.h"
 
 
+
 namespace esphome
 {
 
@@ -27,7 +28,7 @@ namespace adc_continous
     {
     public:
         bool printwave=false;
-        ADCContinuousSensor():PollingComponent(1000) {};
+        ADCContinuousSensor():PollingComponent(1500) {};
         void calcIV(uint32_t len,uint8_t* buffer);
         uint16_t analogRead(uint8_t pin);
         /// Update ADC values
@@ -40,7 +41,7 @@ namespace adc_continous
         //void set_pin(InternalGPIOPin *pin) { this->pin_ = pin; }
         void set_output_raw(bool output_raw) { this->output_raw_ = output_raw; }
         void set_sample_count(uint32_t sample_count){ this->sample_count_ = sample_count; 
-          //buffer_ = (uint8_t*)malloc(sample_count_*SOC_ADC_DIGI_RESULT_BYTES);memset(buffer_,0,sample_count_*SOC_ADC_DIGI_RESULT_BYTES);
+          buffer_ = (uint8_t*)malloc(sample_count_ * SOC_ADC_DIGI_RESULT_BYTES * 4);memset(buffer_,0,sample_count_ * SOC_ADC_DIGI_RESULT_BYTES * 4);
         } 
         void set_attenuation(adc_atten_t attenuation) { this->attenuation_ = attenuation; }
         void set_autorange(bool autorange) { this->autorange_ = autorange; }  
@@ -55,7 +56,7 @@ namespace adc_continous
         virtual void data(char* data);
         void start() ;
         void stop() ;
-        void add_adc_callback(std::function<void(const uint8_t*)> &&callback) {
+        void add_adc_callback(std::function<void(const float&)> &&callback) {
           this->adc_callback_.add(std::move(callback));
         }
         void set_udp(udp::UDPComponent* udp) {
@@ -96,8 +97,8 @@ namespace adc_continous
         uint32_t samplefreq{200000};
         TaskHandle_t adc_task_handle = NULL;
         adc_continuous_handle_t adc_handle = NULL;        
-        CallbackManager<void(const uint8_t*)> adc_callback_{};
-        //uint8_t* buffer_{nullptr};
+        CallbackManager<void(const float&)> adc_callback_{};
+        uint8_t* buffer_{nullptr};
         static void adc_task(void *param);
         static bool IRAM_ATTR callback(adc_continuous_handle_t handle, const adc_continuous_evt_data_t *edata, void *user_data);
         
