@@ -215,7 +215,7 @@ void ADCContinuousSensor::setup() {
     ESP_ERROR_CHECK(adc_continuous_monitor_enable(adc_monitor_handle));
   #endif
 
-    start();
+    //start();
 }
 
 void ADCContinuousSensor::dump_config() {}
