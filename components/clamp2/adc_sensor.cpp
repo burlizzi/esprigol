@@ -106,9 +106,14 @@ void ADCContinuousSensor::loop() {
   cycles++;
   adc_callback_.call(( sumP1 + sumP2 + sumP3)/n);
 #ifdef USE_UDP
-  if (udp_) {
-    udp_->send_packet(udpkt, pktsize);
-    pktsize=0;
+  static uint32_t lastSend=0;
+  if(millis()-lastSend>1000)
+  {
+    if (udp_) {
+      lastSend=millis();
+      udp_->send_packet(udpkt, pktsize);
+      pktsize=0;
+    }
   }
 #endif  
 
@@ -215,7 +220,7 @@ void ADCContinuousSensor::setup() {
     ESP_ERROR_CHECK(adc_continuous_monitor_enable(adc_monitor_handle));
   #endif
 
-  //  start();
+  start();
 }
 
 void ADCContinuousSensor::dump_config() {}
