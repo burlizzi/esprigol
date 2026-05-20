@@ -194,7 +194,7 @@ void ADCContinuousSensor::setup() {
       ESP_LOGW(TAG, "ADC Callback failed");
     }
 
-  #if SOC_ADC_MONITOR_SUPPORTED
+  #if SOC_ADC_MONITOR_SUPPORTED1
     adc_monitor_handle_t adc_monitor_handle = NULL;
 
     adc_monitor_config_t zero_crossing_config = {
