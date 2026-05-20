@@ -191,7 +191,7 @@ async def to_code(config):
             and pin_num in ESP32_VARIANT_ADC2_PIN_TO_CHANNEL[variant]
         ):
             chan = ESP32_VARIANT_ADC2_PIN_TO_CHANNEL[variant][pin_num]
-            cg.add(var.set_channel2(chan))                    
+            cg.add(var.set_channel(0,chan))                    
         pin_num = config[CONF_PIN_A1][CONF_NUMBER]
         if (
             variant in ESP32_VARIANT_ADC1_PIN_TO_CHANNEL
@@ -204,7 +204,7 @@ async def to_code(config):
             and pin_num in ESP32_VARIANT_ADC2_PIN_TO_CHANNEL[variant]
         ):
             chan = ESP32_VARIANT_ADC2_PIN_TO_CHANNEL[variant][pin_num]
-            cg.add(var.set_channel2(chan))
+            cg.add(var.set_channel(1,chan))
 
         pin_num = config[CONF_PIN_A2][CONF_NUMBER]
         if (
@@ -218,7 +218,7 @@ async def to_code(config):
             and pin_num in ESP32_VARIANT_ADC2_PIN_TO_CHANNEL[variant]
         ):
             chan = ESP32_VARIANT_ADC2_PIN_TO_CHANNEL[variant][pin_num]
-            cg.add(var.set_channel2(chan))
+            cg.add(var.set_channel(2,chan))
 
         pin_num = config[CONF_PIN_A3][CONF_NUMBER]
         if (
@@ -232,7 +232,7 @@ async def to_code(config):
             and pin_num in ESP32_VARIANT_ADC2_PIN_TO_CHANNEL[variant]
         ):
             chan = ESP32_VARIANT_ADC2_PIN_TO_CHANNEL[variant][pin_num]
-            cg.add(var.set_channel2(chan))
+            #cg.add(var.set_channel(3,chan))
         cg.add_define("USE_OTA_STATE_CALLBACK")
     # Register on_data automations
     for conf in config.get(CONF_ON_DATA, []):
