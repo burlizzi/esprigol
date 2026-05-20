@@ -45,14 +45,17 @@ void ADCContinuousSensor::loop() {
   uint8_t udpkt[n*4];
   int pktsize=0;
   #endif
-  
-
+  #if (SOC_ADC_DIGI_RESULT_BYTES == 2)
+    #define ADC_TYPE type1
+  #else
+    #define ADC_TYPE type2
+  #endif
   for (int i = 0; i < len; i += SOC_ADC_DIGI_RESULT_BYTES) {
     adc_digi_output_data_t *p = (adc_digi_output_data_t*)&buffer_[i];
-    auto pin=channels[p->type1.channel];
-    avg[pin]+=p->type1.data;
+    auto pin=channels[p->ADC_TYPE.channel];
+    avg[pin]+=p->ADC_TYPE.data;
     if(pin==0)
-      volts[i/SOC_ADC_DIGI_RESULT_BYTES/4]=p->type1.data;
+      volts[i/SOC_ADC_DIGI_RESULT_BYTES/4]=p->ADC_TYPE.data;
 
   }
   avg[0]/=n;
@@ -68,15 +71,15 @@ void ADCContinuousSensor::loop() {
     for(int j=0;j<4*SOC_ADC_DIGI_RESULT_BYTES;j+= SOC_ADC_DIGI_RESULT_BYTES)
     {
       adc_digi_output_data_t *p = (adc_digi_output_data_t*)&buffer_[i+j];
-      auto pin = channels[p->type1.channel];
-      auto value=(p->type1.data-avg[pin])/1024.0;
+      auto pin = channels[p->ADC_TYPE.channel];
+      auto value=(p->ADC_TYPE.data-avg[pin])/1024.0;
       if(pin<4)
       {
         values[pin] = value;
       }  
       else
       {
-        ESP_LOGW(TAG, "Unknown channel %d with value %d", p->type1.channel, p->type1.data);
+        ESP_LOGW(TAG, "Unknown channel %d with value %d", p->ADC_TYPE.channel, p->ADC_TYPE.data);
       }
 
     }
@@ -92,7 +95,7 @@ void ADCContinuousSensor::loop() {
     udpkt[pktsize++]=values[2]*255;
     udpkt[pktsize++]=values[3]*255;
   #endif
-
+  #undef ADC_TYPE
   }
   
   
