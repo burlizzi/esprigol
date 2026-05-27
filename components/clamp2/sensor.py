@@ -37,6 +37,11 @@ AUTO_LOAD = ["voltage_sampler","sensor"]
 
 CONF_SAMPLES = "samples"
 CONF_SAMPLING_MODE = "sampling_mode"
+CONF_VOLTAGE_PINS = "voltage_pins"
+CONF_CURRENT_PINS = "current_pins"
+CONF_PHASE = "phase"
+CONF_CALIBRATION = "calibration"
+CONF_PIN_V = "pinV"
 CONF_PIN_A1 = "pinA1"
 CONF_PIN_A2 = "pinA2"
 CONF_PIN_A3 = "pinA3"
@@ -47,9 +52,9 @@ CONF_CALIBRATION_I3 = "calibrationI3"
 CONF_PHASESHIFT1 = "phaseShift1"
 CONF_PHASESHIFT2 = "phaseShift2"
 CONF_PHASESHIFT3 = "phaseShift3"
-CONF_PIN_V = "pinV"
 CONF_UDP = "udp"
 CONF_ON_DATA = "on_data"
+CONF_AUTOSTART = "autostart"
 
 _attenuation = cv.enum(ATTENUATION_MODES, lower=True)
 _sampling_mode = cv.enum(SAMPLING_MODES, lower=True)
@@ -76,20 +81,24 @@ def validate_config(config):
 def final_validate_config(config):
     if CORE.is_esp32:
         variant = get_esp32_variant()
-        if (
-            CONF_WIFI in fv.full_config.get()
-            and config[CONF_PIN_A1][CONF_NUMBER]
-            in ESP32_VARIANT_ADC2_PIN_TO_CHANNEL[variant]
-            and config[CONF_PIN_A2][CONF_NUMBER]
-            in ESP32_VARIANT_ADC2_PIN_TO_CHANNEL[variant]
-            and config[CONF_PIN_A3][CONF_NUMBER]
-            in ESP32_VARIANT_ADC2_PIN_TO_CHANNEL[variant]
-            and config[CONF_PIN_V][CONF_NUMBER]
-            in ESP32_VARIANT_ADC2_PIN_TO_CHANNEL[variant]
-        ):
-            raise cv.Invalid(
-                f"{variant} doesn't support ADC on this pin when Wi-Fi is configured"
-            )
+        if CONF_WIFI in fv.full_config.get():
+            # Collect all pins from voltage_pins and current_pins
+            all_pins = []
+            if CONF_VOLTAGE_PINS in config:
+                for pin_conf in config[CONF_VOLTAGE_PINS]:
+                    all_pins.append(pin_conf[CONF_PIN][CONF_NUMBER])
+            if CONF_CURRENT_PINS in config:
+                for pin_conf in config[CONF_CURRENT_PINS]:
+                    all_pins.append(pin_conf[CONF_PIN][CONF_NUMBER])
+            
+            # Check if all pins are on ADC2
+            if all(
+                pin in ESP32_VARIANT_ADC2_PIN_TO_CHANNEL[variant]
+                for pin in all_pins
+            ):
+                raise cv.Invalid(
+                    f"{variant} doesn't support ADC on these pins when Wi-Fi is configured"
+                )
 
     return config
 
@@ -114,18 +123,19 @@ CONFIG_SCHEMA = cv.All(
     )
     .extend(
         {
-            cv.Required(CONF_PIN_A1): validate_adc_pin,
-            cv.Required(CONF_PIN_A2): validate_adc_pin,
-            cv.Required(CONF_PIN_A3): validate_adc_pin,
-            cv.Required(CONF_PIN_V): validate_adc_pin,
-            cv.Required(CONF_CALIBRATION_V): cv.float_,
-            cv.Required(CONF_CALIBRATION_I1): cv.float_,
-            cv.Required(CONF_CALIBRATION_I2): cv.float_,
-            cv.Required(CONF_CALIBRATION_I3): cv.float_,
-            cv.Optional(CONF_PHASESHIFT1, default=0.0): cv.float_,
-            cv.Optional(CONF_PHASESHIFT2, default=120.0): cv.float_,
-            cv.Optional(CONF_PHASESHIFT3, default=240.0): cv.float_,
-
+            cv.Required(CONF_VOLTAGE_PINS): cv.ensure_list(
+                cv.Schema({
+                    cv.Required(CONF_PIN): validate_adc_pin,
+                    cv.Required(CONF_CALIBRATION): cv.float_,
+                })
+            ),
+            cv.Required(CONF_CURRENT_PINS): cv.ensure_list(
+                cv.Schema({
+                    cv.Required(CONF_PIN): validate_adc_pin,
+                    cv.Required(CONF_CALIBRATION): cv.float_,
+                    cv.Optional(CONF_PHASE, default=0.0): cv.float_,
+                })
+            ),
             cv.Optional(CONF_RAW, default=False): cv.boolean,
             cv.SplitDefault(CONF_ATTENUATION, esp32="12db"): cv.All(
                 cv.only_on_esp32, _attenuation
@@ -137,6 +147,7 @@ CONFIG_SCHEMA = cv.All(
             cv.Optional(CONF_ON_DATA): automation.validate_automation(
               {cv.GenerateID(CONF_TRIGGER_ID): cv.declare_id(DataTrigger)}
             ),
+            cv.Optional(CONF_AUTOSTART, default=True): cv.boolean,
 
         }
     )
@@ -148,20 +159,30 @@ FINAL_VALIDATE_SCHEMA = final_validate_config
 
 
 async def to_code(config):
-    var = cg.new_Pvariable(config[CONF_ID])
+    voltage_pins = config[CONF_VOLTAGE_PINS]
+    current_pins = config[CONF_CURRENT_PINS]
+    #template_args = cg.TemplateArguments(len(voltage_pins), len(current_pins))
+    var = cg.new_Pvariable(config[CONF_ID], len(voltage_pins), len(current_pins))
     await cg.register_component(var, config)
     await sensor.register_sensor(var, config)
 
-    cg.add(var.set_calibrationV(config[CONF_CALIBRATION_V]))
-    cg.add(var.set_calibrationI1(config[CONF_CALIBRATION_I1]))
-    cg.add(var.set_calibrationI2(config[CONF_CALIBRATION_I2]))
-    cg.add(var.set_calibrationI3(config[CONF_CALIBRATION_I3]))
-    cg.add(var.set_phaseShift1(config[CONF_PHASESHIFT1]/360.0))
-    cg.add(var.set_phaseShift2(config[CONF_PHASESHIFT2]/360.0))
-    cg.add(var.set_phaseShift3(config[CONF_PHASESHIFT3]/360.0))
+    # Extract voltage pin and calibration
+    for i, pin_conf in enumerate(voltage_pins, 0):
+        voltage_calib = pin_conf[CONF_CALIBRATION]
+        cg.add(var.set_calibrationV(i, voltage_calib))
+    
+    # Extract current pins, calibrations, and phases
+    for i, pin_conf in enumerate(current_pins, 0):
+        calib = pin_conf[CONF_CALIBRATION]
+        phase = pin_conf[CONF_PHASE]
+        cg.add(var.set_calibrationI(i, calib))
+        cg.add(var.set_phaseShift(i, phase))
+        
+    
     cg.add(var.set_output_raw(config[CONF_RAW]))
     cg.add(var.set_sample_count(config[CONF_SAMPLES]))
     cg.add(var.set_frequency(config[CONF_FREQUENCY]))
+    cg.add(var.set_autostart(config.get(CONF_AUTOSTART, True)))
     if udp := config.get(CONF_UDP):
         udp_var = await cg.get_variable(udp)
         cg.add(var.set_udp(udp_var))
@@ -179,60 +200,38 @@ async def to_code(config):
             esp32_component.include_builtin_idf_component("esp_adc")
 
         variant = get_esp32_variant()
-        pin_num = config[CONF_PIN_V][CONF_NUMBER]
+        
+        # Set voltage channel
+        pin_num = voltage_pins[0][CONF_PIN][CONF_NUMBER]
         if (
             variant in ESP32_VARIANT_ADC1_PIN_TO_CHANNEL
             and pin_num in ESP32_VARIANT_ADC1_PIN_TO_CHANNEL[variant]
         ):
             chan = ESP32_VARIANT_ADC1_PIN_TO_CHANNEL[variant][pin_num]
-            cg.add(var.set_channel(0,chan))
+            cg.add(var.set_channel(0, chan))
         elif (
             variant in ESP32_VARIANT_ADC2_PIN_TO_CHANNEL
             and pin_num in ESP32_VARIANT_ADC2_PIN_TO_CHANNEL[variant]
         ):
             chan = ESP32_VARIANT_ADC2_PIN_TO_CHANNEL[variant][pin_num]
-            cg.add(var.set_channel(0,chan))                    
-        pin_num = config[CONF_PIN_A1][CONF_NUMBER]
-        if (
-            variant in ESP32_VARIANT_ADC1_PIN_TO_CHANNEL
-            and pin_num in ESP32_VARIANT_ADC1_PIN_TO_CHANNEL[variant]
-        ):
-            chan = ESP32_VARIANT_ADC1_PIN_TO_CHANNEL[variant][pin_num]
-            cg.add(var.set_channel(1,chan))
-        elif (
-            variant in ESP32_VARIANT_ADC2_PIN_TO_CHANNEL
-            and pin_num in ESP32_VARIANT_ADC2_PIN_TO_CHANNEL[variant]
-        ):
-            chan = ESP32_VARIANT_ADC2_PIN_TO_CHANNEL[variant][pin_num]
-            cg.add(var.set_channel(1,chan))
-
-        pin_num = config[CONF_PIN_A2][CONF_NUMBER]
-        if (
-            variant in ESP32_VARIANT_ADC1_PIN_TO_CHANNEL
-            and pin_num in ESP32_VARIANT_ADC1_PIN_TO_CHANNEL[variant]
-        ):
-            chan = ESP32_VARIANT_ADC1_PIN_TO_CHANNEL[variant][pin_num]
-            cg.add(var.set_channel(2,chan))
-        elif (
-            variant in ESP32_VARIANT_ADC2_PIN_TO_CHANNEL
-            and pin_num in ESP32_VARIANT_ADC2_PIN_TO_CHANNEL[variant]
-        ):
-            chan = ESP32_VARIANT_ADC2_PIN_TO_CHANNEL[variant][pin_num]
-            cg.add(var.set_channel(2,chan))
-
-        pin_num = config[CONF_PIN_A3][CONF_NUMBER]
-        if (
-            variant in ESP32_VARIANT_ADC1_PIN_TO_CHANNEL
-            and pin_num in ESP32_VARIANT_ADC1_PIN_TO_CHANNEL[variant]
-        ):
-            chan = ESP32_VARIANT_ADC1_PIN_TO_CHANNEL[variant][pin_num]
-            cg.add(var.set_channel(3,chan))
-        elif (
-            variant in ESP32_VARIANT_ADC2_PIN_TO_CHANNEL
-            and pin_num in ESP32_VARIANT_ADC2_PIN_TO_CHANNEL[variant]
-        ):
-            chan = ESP32_VARIANT_ADC2_PIN_TO_CHANNEL[variant][pin_num]
-            #cg.add(var.set_channel(3,chan))
+            cg.add(var.set_channel(0, chan))
+        
+        # Set current channels
+        for i, pin_conf in enumerate(current_pins, 1):
+            pin_num = pin_conf[CONF_PIN][CONF_NUMBER]
+            if (
+                variant in ESP32_VARIANT_ADC1_PIN_TO_CHANNEL
+                and pin_num in ESP32_VARIANT_ADC1_PIN_TO_CHANNEL[variant]
+            ):
+                chan = ESP32_VARIANT_ADC1_PIN_TO_CHANNEL[variant][pin_num]
+                cg.add(var.set_channel(i, chan))
+            elif (
+                variant in ESP32_VARIANT_ADC2_PIN_TO_CHANNEL
+                and pin_num in ESP32_VARIANT_ADC2_PIN_TO_CHANNEL[variant]
+            ):
+                chan = ESP32_VARIANT_ADC2_PIN_TO_CHANNEL[variant][pin_num]
+                cg.add(var.set_channel(i, chan))
+        
         cg.add_define("USE_OTA_STATE_CALLBACK")
     # Register on_data automations
     for conf in config.get(CONF_ON_DATA, []):

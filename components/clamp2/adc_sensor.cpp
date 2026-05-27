@@ -25,24 +25,32 @@ bool IRAM_ATTR ADCContinuousSensor::callback(adc_continuous_handle_t handle, con
 }
 
 
-
+bool low=false;
+bool high=false;
 
 
 void ADCContinuousSensor::loop() {
   uint32_t len = 0;
+  if (!started_) {
+    return;
+  }
   if( adc_continuous_read(adc_handle, buffer_, sample_count_ * SOC_ADC_DIGI_RESULT_BYTES * 4, &len, 0) != ESP_OK ) {
     //ESP_LOGW(TAG, "ADC Read failed");
    return;
   }
+  const int numPins = vPins_+cPins_;
 
+  const int n=len/SOC_ADC_DIGI_RESULT_BYTES/numPins;
+  int32_t avg[numPins] = {0};
+  float max[numPins] = {0};
+  float min[numPins] = {0};
+  float values[numPins] = {0};
+  unsigned int zerocrossings[numPins]={0};
+  float prevValues[numPins]={0};
 
-  const int n=len/SOC_ADC_DIGI_RESULT_BYTES/4;
-  //calculate averages
-  int32_t avg[4] = {0,0,0,0};
-  float values[4] = {0,0,0,0};
   uint16_t volts[n]={0};
   #ifdef USE_UDP
-  uint8_t udpkt[n*4];
+  uint8_t udpkt[n*numPins];
   int pktsize=0;
   #endif
   #if (SOC_ADC_DIGI_RESULT_BYTES == 2)
@@ -50,30 +58,52 @@ void ADCContinuousSensor::loop() {
   #else
     #define ADC_TYPE type2
   #endif
+
+  //calculate averages
   for (int i = 0; i < len; i += SOC_ADC_DIGI_RESULT_BYTES) {
     adc_digi_output_data_t *p = (adc_digi_output_data_t*)&buffer_[i];
     auto pin=channels[p->ADC_TYPE.channel];
     avg[pin]+=p->ADC_TYPE.data;
+    if(p->ADC_TYPE.data>max[pin])
+      max[pin]=p->ADC_TYPE.data;
+    if(p->ADC_TYPE.data<min[pin])
+      min[pin]=p->ADC_TYPE.data;
     if(pin==0)
-      volts[i/SOC_ADC_DIGI_RESULT_BYTES/4]=p->ADC_TYPE.data;
+      volts[i/SOC_ADC_DIGI_RESULT_BYTES/numPins]=p->ADC_TYPE.data;
 
   }
-  avg[0]/=n;
-  avg[1]/=n;
-  avg[2]/=n;
-  avg[3]/=n;
-  float sumP1 = 0;
-  float sumP2 = 0;
-  float sumP3 = 0;
+  for(int i=0;i<numPins;i++)
+  {
+    avg[i]/=n;
+    min[i]-=avg[i];
+    max[i]-=avg[i];
+    min[i]/=10240.0;//10% of 1024, to avoid noise around zero
+    max[i]/=10240.0;//10% of 1024, to avoid noise around zero
+  }
+
+  float sumP[cPins_] = {0};
   
 
-  for (int i = 0; i < len; i += SOC_ADC_DIGI_RESULT_BYTES*4) {
+
+  //we find zerocrossings
+  for (int i = 0; i < len; i += SOC_ADC_DIGI_RESULT_BYTES) {
+    adc_digi_output_data_t *p = (adc_digi_output_data_t*)&buffer_[i];
+    auto pin=channels[p->ADC_TYPE.channel];
+    auto value=(((float)p->ADC_TYPE.data)-avg[pin])/1024.0;
+    if (prevValues[pin]<min[pin] && value>max[pin]) 
+    {
+      zerocrossings[pin]=i/SOC_ADC_DIGI_RESULT_BYTES/numPins;
+    }
+    prevValues[pin]=value;
+  }  
+
+  for (int i = 0; i < len; i += SOC_ADC_DIGI_RESULT_BYTES*numPins) {
     for(int j=0;j<4*SOC_ADC_DIGI_RESULT_BYTES;j+= SOC_ADC_DIGI_RESULT_BYTES)
     {
       adc_digi_output_data_t *p = (adc_digi_output_data_t*)&buffer_[i+j];
       auto pin = channels[p->ADC_TYPE.channel];
-      auto value=(p->ADC_TYPE.data-avg[pin])/1024.0;
-      if(pin<4)
+      auto value=(((float)p->ADC_TYPE.data)-avg[pin])/1024.0;
+      if(pin<numPins)
       {
         values[pin] = value;
       }  
@@ -83,39 +113,47 @@ void ADCContinuousSensor::loop() {
       }
 
     }
-    auto V1=(volts[(int)(i/SOC_ADC_DIGI_RESULT_BYTES/4 + phaseShift1*n) % n]-avg[0])/1024.0;
-    auto V2=(volts[(int)(i/SOC_ADC_DIGI_RESULT_BYTES/4 + phaseShift2*n) % n]-avg[0])/1024.0;
-    auto V3=(volts[(int)(i/SOC_ADC_DIGI_RESULT_BYTES/4 + phaseShift3*n) % n]-avg[0])/1024.0;
-    sumP1 += V1*values[1];
-    sumP2 += V2*values[2];
-    sumP3 += V3*values[3];
+
+    //auto V1=(sinTable[(int)(i/SOC_ADC_DIGI_RESULT_BYTES/numPins +n- zerocrossings[1]) % n]);
+    
+    auto V1=(volts[(int)(i/SOC_ADC_DIGI_RESULT_BYTES/numPins + phaseShifts[0]*n) % n]-avg[0])/1024.0;
+    auto V2=(volts[(int)(i/SOC_ADC_DIGI_RESULT_BYTES/numPins + phaseShifts[1]*n) % n]-avg[0])/1024.0;
+    auto V3=(volts[(int)(i/SOC_ADC_DIGI_RESULT_BYTES/numPins + phaseShifts[2]*n) % n]-avg[0])/1024.0;
+    sumP[0] += ((max[1]-min[1])>0.2?V1:values[1])*values[1];
+    sumP[1] += V2*values[2];
+    sumP[2] += V3*values[3];
   #ifdef USE_UDP
-    udpkt[pktsize++]=values[0]*255;
-    udpkt[pktsize++]=values[1]*255;
-    udpkt[pktsize++]=values[2]*255;
-    udpkt[pktsize++]=values[3]*255;
+    udpkt[pktsize++]=(V2+0.5)*256;
+    udpkt[pktsize++]=(values[1]+0.5)*256;
+    udpkt[pktsize++]=(values[2]+0.5)*256;
+    udpkt[pktsize++]=(values[3]+0.5)*256;
   #endif
   #undef ADC_TYPE
   }
   
   
-  ESP_LOGV(TAG, "p: %f %f %f", sumP1/n, sumP2/n, sumP3/n);
-  sumPower1+=(sumP1*calibrationI1/(float)n);
-  sumPower2+=(sumP2*calibrationI2/(float)n);
-  sumPower3+=(sumP3*calibrationI3/(float)n);
+  ESP_LOGV(TAG, "p: %f %f %f", sumP[0]/n, sumP[1]/n, sumP[2]/n);
+  sumPower[0]+=(sumP[0]*calibrationIs[0]/(float)n);
+  sumPower[1]+=(sumP[1]*calibrationIs[1]/(float)n);
+  sumPower[2]+=(sumP[2]*calibrationIs[2]/(float)n);
   cycles++;
-  adc_callback_.call(( sumP1 + sumP2 + sumP3)/n);
-#ifdef USE_UDP
+  adc_callback_.call(( sumP[0] + sumP[1] + sumP[2])/n);
+
   static uint32_t lastSend=0;
   if(millis()-lastSend>1000)
   {
+    ESP_LOGD(TAG, "avg: %d %d %d %d", avg[0], avg[1], avg[2], avg[3]);
+    ESP_LOGD(TAG, "min: %f max: %f low: %s high: %s zero:%d", min[1], max[1], low ? "true" : "false", high ? "true" : "false",zerocrossings[1]);
+    low=false;
+    high=false;
+#ifdef USE_UDP
     if (udp_) {
       lastSend=millis();
       udp_->send_packet(udpkt, pktsize);
       pktsize=0;
     }
-  }
 #endif  
+  }
 
 
 }
@@ -125,15 +163,15 @@ void ADCContinuousSensor::update() {
   this->publish_state(sample());
 }
 
-#if SOC_ADC_MONITOR_SUPPORTED
+#if SOC_ADC_MONITOR_SUPPORTED1
 bool example_on_exceed_high_thresh(adc_monitor_handle_t monitor_handle,
                                    const adc_monitor_evt_data_t *event_data, void *user_data) {
-  ESP_LOGW(TAG, "ADC Monitor: Exceeded high threshold!");
+  high=true;
   return true;
 }
 bool example_on_below_low_thresh(adc_monitor_handle_t monitor_handle,
                                  const adc_monitor_evt_data_t *event_data, void *user_data) {
-  ESP_LOGW(TAG, "ADC Monitor: Below low threshold!");
+  low=true;
   return true;
 }
 #endif
@@ -153,7 +191,7 @@ void ADCContinuousSensor::setup() {
     ota::get_global_ota_callback()->add_global_state_listener(this);
   #endif
 
-    constexpr const int numChannels = 4;
+    const char numChannels = vPins_+cPins_;
 
     adc_continuous_handle_cfg_t handle_config = {
         .max_store_buf_size = sample_count_ * 2 * SOC_ADC_DIGI_RESULT_BYTES * numChannels,
@@ -167,7 +205,7 @@ void ADCContinuousSensor::setup() {
 
     static adc_continuous_config_t adc_cnfig = {
         .pattern_num = numChannels,
-        .sample_freq_hz = samplefreq*4*sample_count_,
+        .sample_freq_hz = samplefreq*numChannels*sample_count_,
         .conv_mode = ADC_CONV_SINGLE_UNIT_1,
   #if (SOC_ADC_DIGI_RESULT_BYTES == 2)
         .format = ADC_DIGI_OUTPUT_FORMAT_TYPE1,
@@ -200,6 +238,7 @@ void ADCContinuousSensor::setup() {
     }
 
   #if SOC_ADC_MONITOR_SUPPORTED1
+  
     adc_monitor_handle_t adc_monitor_handle = NULL;
 
     adc_monitor_config_t zero_crossing_config = {
@@ -220,7 +259,9 @@ void ADCContinuousSensor::setup() {
     ESP_ERROR_CHECK(adc_continuous_monitor_enable(adc_monitor_handle));
   #endif
 
-  start();
+  if (autostart_) {
+    start();
+  }
 }
 
 void ADCContinuousSensor::dump_config() {}
@@ -229,25 +270,40 @@ void ADCContinuousSensor::start() {
   if (adc_continuous_start(adc_handle) != ESP_OK) {
     ESP_LOGW(TAG, "ADC Start failed");
   }
+  else
+  {
+    started_=true;
+  }
 }
 
 void ADCContinuousSensor::stop() {
   if (adc_continuous_stop(adc_handle) != ESP_OK) {
     ESP_LOGW(TAG, "ADC Start failed");
   }
+  else
+  {
+    started_=false;
+  }
 }
 
 float ADCContinuousSensor::get_setup_priority() const { return setup_priority::LATE; }
 
 float ADCContinuousSensor::sample() {
-  lastRealPower1=sumPower1/cycles;
-  lastRealPower2=sumPower2/cycles;
-  lastRealPower3=sumPower3/cycles;
-  sumPower1=0;
-  sumPower2=0;
-  sumPower3=0;
+  if (!started_) {
+    return {};
+  }
+  float sum=0;
+  for(int i=0;i<cPins_;i++)
+  {
+    lastRealPower[i]=sumPower[i]/cycles;
+    sum+=lastRealPower[i];
+    sumPower[i]=0;
+  }
   cycles=0;
-  return lastRealPower1+lastRealPower2+lastRealPower3;
+  return 
+    lastRealPower[0]
+    //sum
+    ;
 }
 
 } // namespace adc_continous

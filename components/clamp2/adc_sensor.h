@@ -28,6 +28,7 @@ namespace adc_continous
 {
     bool example_adc_calibration_init(adc_unit_t unit, adc_channel_t channel, adc_atten_t atten, adc_cali_handle_t *out_handle);
     static const char *const TAG = "CLAMP";
+//    template <int VPINS, int CPINS>
     class ADCContinuousSensor :  public  sensor::Sensor, public virtual PollingComponent, public voltage_sampler::VoltageSampler
 #ifdef USE_OTA_STATE_LISTENER
     ,public ota::OTAGlobalStateListener
@@ -37,8 +38,16 @@ namespace adc_continous
 #ifdef USE_OTA_STATE_LISTENER
   void on_ota_global_state(ota::OTAState state, float progress, uint8_t error, ota::OTAComponent *comp) override;
 #endif        
-        ADCContinuousSensor():PollingComponent(1500) {};
-        void calcIV(uint32_t len,uint8_t* buffer);
+        ADCContinuousSensor(int vpins,int cpins)
+          :PollingComponent(1500)
+          ,vPins_(vpins)
+          ,cPins_(cpins) 
+          ,calibrationVs(vpins,1.0)
+          ,sumPower(cpins,0.0)
+          ,lastRealPower(cpins,0.0)
+          ,phaseShifts(cpins,0.0)
+          ,calibrationIs(cpins,1.0)
+          {}
         uint16_t analogRead(uint8_t pin);
         /// Update ADC values
         void update() override;
@@ -50,25 +59,37 @@ namespace adc_continous
         //void set_pin(InternalGPIOPin *pin) { this->pin_ = pin; }
         void set_output_raw(bool output_raw) { this->output_raw_ = output_raw; }
         void set_sample_count(uint32_t sample_count){ this->sample_count_ = sample_count; 
-          buffer_ = (uint8_t*)malloc(sample_count_ * SOC_ADC_DIGI_RESULT_BYTES * 4);memset(buffer_,0,sample_count_ * SOC_ADC_DIGI_RESULT_BYTES * 4);
+          buffer_ = (uint8_t*)malloc(sample_count_ * SOC_ADC_DIGI_RESULT_BYTES * (vPins_+cPins_));
+          memset(buffer_,0,sample_count_ * SOC_ADC_DIGI_RESULT_BYTES * (vPins_+cPins_));
+          sinTable.resize(sample_count_);
+          for(size_t i=0;i<sample_count_;i++)          
+          {
+            sinTable[i]=sin(2.0f*M_PI*i/sample_count_);
+          }
         } 
-        void set_attenuation(adc_atten_t attenuation) { this->attenuation_ = attenuation; }
-        void set_phaseShift1(float phaseShift1) { this->phaseShift1 = phaseShift1; }
-        void set_phaseShift2(float phaseShift2) { this->phaseShift2 = phaseShift2; }
-        void set_phaseShift3(float phaseShift3) { this->phaseShift3 = phaseShift3; }
-        void set_calibrationV(float calibrationV) { this->calibrationV = calibrationV; }
-        void set_calibrationI1(float calibrationI1) { this->calibrationI1 = calibrationI1; }
-        void set_calibrationI2(float calibrationI2) { this->calibrationI2 = calibrationI2; }
-        void set_calibrationI3(float calibrationI3) { this->calibrationI3 = calibrationI3; }
+        void set_attenuation(adc_atten_t attenuation) { 
+          this->attenuation_ = attenuation; 
+        }
+        void set_phaseShift(size_t index, float phaseShift) { 
+          this->phaseShifts[index] = phaseShift/360.0f; 
+        }
+        void set_calibrationV(size_t index, float calibrationV) { 
+          this->calibrationVs[index] = calibrationV; 
+        }
+        void set_calibrationI(size_t index, float calibrationI) { 
+          this->calibrationIs[index] = calibrationI; 
+        }
+        
         //void set_autorange(bool autorange) { this->autorange_ = autorange; }  
-        void set_channel(uint8_t pin, adc_channel_t channel) { this->channel[pin] = channel; channels[channel]=pin;}
+        void set_autostart(bool autostart) { this->autostart_ = autostart; }  
+        void set_channel(uint8_t pin, adc_channel_t channel) { 
+          this->channel[pin] = channel; channels[channel]=pin;
+        }
         void set_frequency(uint32_t samplefreq) { this->samplefreq = samplefreq; }
         inline uint32_t get_frequency() { return this->samplefreq; }
         inline uint32_t get_sample_count() { return this->sample_count_; }
         float sample() override;
-        float getRealPower1(){ return lastRealPower1;}
-        float getRealPower2(){ return lastRealPower2;}
-        float getRealPower3(){ return lastRealPower3;}
+        float getRealPower(size_t index){ return this->lastRealPower[index]; }
         //virtual void data(char* data);
         void start() ;
         void stop() ;
@@ -89,6 +110,8 @@ namespace adc_continous
         void  calcPhaseShift(uint8_t lChannel);
         void loop() override;
         bool output_raw_{false};
+        int vPins_{0};
+        int cPins_{0};
         uint32_t sample_count_{1};
         uint32_t samplefreq{50};
         uint8_t cycles{0};
@@ -97,24 +120,22 @@ namespace adc_continous
         CallbackManager<void(const float&)> adc_callback_{};
         uint8_t* buffer_{nullptr};
         static bool IRAM_ATTR callback(adc_continuous_handle_t handle, const adc_continuous_evt_data_t *edata, void *user_data);
-        float sumPower1=0;
-        float sumPower2=0;
-        float sumPower3=0;        
-        float lastRealPower1=0;
-        float lastRealPower2=0;
-        float lastRealPower3=0;        
-        float phaseShift1=0;
-        float phaseShift2=1.0/3.0;
-        float phaseShift3=2.0/3.0;
-        float calibrationV=1;
-        float calibrationI1=1;
-        float calibrationI2=1;
-        float calibrationI3=1;
+        
+        bool started_{false};
+        bool autostart_{true};
+
+        std::vector<float> calibrationVs;
+        std::vector<float> sumPower;
+        std::vector<float> lastRealPower;
+        std::vector<float> phaseShifts;
+        std::vector<float> calibrationIs;
+        std::vector<float> sinTable;
+        
 
      
       #ifdef USE_ESP32
         adc_atten_t attenuation_{ADC_ATTEN_DB_12};
-        adc_channel_t channel[4];
+        adc_channel_t channel[10];
         uint8_t channels[10];
       #endif  // USE_ESP32
     };
