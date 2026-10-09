@@ -1,6 +1,7 @@
 import logging
 import esphome.codegen as cg
 from esphome.components import sensor, voltage_sampler, udp
+import esphome.components.esp32 as esp32_component
 from esphome.components.esp32 import get_esp32_variant
 from esphome.components.esp32 import add_idf_sdkconfig_option
 import esphome.config_validation as cv
@@ -141,6 +142,8 @@ async def to_code(config):
     if CORE.is_esp32:
 
         add_idf_sdkconfig_option("CONFIG_ADC_CONTINUOUS_ISR_IRAM_SAFE", True)
+        if hasattr(esp32_component, "include_builtin_idf_component"):
+            esp32_component.include_builtin_idf_component("esp_adc")
 
         variant = get_esp32_variant()
         pin_num = config[CONF_PIN_V][CONF_NUMBER]

@@ -215,9 +215,11 @@ void IRAM_ATTR ADCContinuousSensor::calcIV(uint32_t len, uint8_t *buffer) {
 
 void ADCContinuousSensor::update() {
   //ESP_LOGI(TAG, "samples= %d overflow=%d cross=%d", numberOfSamples, overflow_count,crossCount);
+#ifdef USE_UDP
   if (udp_) {
     //udp_->send_packet(udpkt, pktsize);
   }
+#endif
 
   this->publish_state(sample());
   std::swap(this->set_, this->get_);
@@ -236,15 +238,17 @@ bool example_on_below_low_thresh(adc_monitor_handle_t monitor_handle,
 }
 #endif
 
-void ADCContinuousSensor::setup() {
-#ifdef USE_OTA_STATE_CALLBACK
-  ota::get_global_ota_callback()->add_on_state_callback([this](ota::OTAState state, float progress,
-                                                               uint8_t error, ota::OTAComponent *comp) {
-    if (state == ota::OTA_STARTED) {
+
+#ifdef USE_OTA_STATE_LISTENER
+void ADCContinuousSensor::on_ota_global_state(ota::OTAState state, float progress, uint8_t error, ota::OTAComponent *comp) {
+  if (state == ota::OTA_STARTED) {
       this->stop();
     }
-  });
+}
 #endif
+
+
+void ADCContinuousSensor::setup() {
 
   constexpr const int numChannels = 4;
 

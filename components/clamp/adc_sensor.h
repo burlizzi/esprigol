@@ -6,7 +6,9 @@
 #include "esphome/components/sensor/sensor.h"
 #include "esphome/core/component.h"
 #include "esphome/core/log.h"
+#ifdef USE_UDP
 #include "esphome/components/udp/udp_component.h"
+#endif
 
 #include "esphome/components/voltage_sampler/voltage_sampler.h"
 #include "esp_adc/adc_continuous.h"
@@ -14,6 +16,9 @@
 
 #include "esp_adc/adc_cali.h"
 #include "esp_adc/adc_cali_scheme.h"
+#ifdef USE_OTA_STATE_CALLBACK
+#include "esphome/components/ota/ota_backend.h"
+#endif
 
 
 
@@ -25,7 +30,13 @@ namespace adc_continous
     bool example_adc_calibration_init(adc_unit_t unit, adc_channel_t channel, adc_atten_t atten, adc_cali_handle_t *out_handle);
     static const char *const TAG = "ADCContinuousSensor";
     class ADCContinuousSensor :  public  sensor::Sensor, public virtual PollingComponent, public voltage_sampler::VoltageSampler
+#ifdef USE_OTA_STATE_LISTENER
+    ,public ota::OTAGlobalStateListener
+#endif
     {
+#ifdef USE_OTA_STATE_LISTENER
+  void on_ota_global_state(ota::OTAState state, float progress, uint8_t error, ota::OTAComponent *comp) override;
+#endif        
     public:
         bool printwave=false;
         ADCContinuousSensor():PollingComponent(1500) {};
@@ -59,12 +70,15 @@ namespace adc_continous
         void add_adc_callback(std::function<void(const float&)> &&callback) {
           this->adc_callback_.add(std::move(callback));
         }
+#ifdef USE_UDP
         void set_udp(udp::UDPComponent* udp) {
           udp_=udp;
           udp->set_should_broadcast();
 
         }
         udp::UDPComponent* udp_=nullptr;
+#endif
+
         struct State {
           // Add any state variables needed for ISR <-> loop communication
           float avgp1 = 0;
