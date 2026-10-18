@@ -142,20 +142,18 @@ void ADCContinuousSensor::loop() {
   static uint32_t lastSend=0;
   if(millis()-lastSend>1000)
   {
+    lastSend=millis();
     ESP_LOGD(TAG, "avg: %d %d %d %d", avg[0], avg[1], avg[2], avg[3]);
     ESP_LOGD(TAG, "min: %f max: %f low: %s high: %s zero:%d", min[1], max[1], low ? "true" : "false", high ? "true" : "false",zerocrossings[1]);
     low=false;
     high=false;
 #ifdef USE_UDP
     if (udp_) {
-      lastSend=millis();
       udp_->send_packet(udpkt, pktsize);
       pktsize=0;
     }
 #endif  
   }
-
-
 }
 
 
